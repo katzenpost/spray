@@ -91,6 +91,18 @@ func (lCfg *Logging) validate() error {
 
 // Debug is the debug configuration.
 type Debug struct {
+	// TargetProvider is the target service provider for our probes.
+	TargetProvider string
+
+	// TargetRecipienti is the target recipient for our probes.
+	TargetRecipient string
+
+	// SendBurst controls the burst rate of the egress rate limiter.
+	SendBurst int
+
+	// SendRate controls the egress rate limiter and is packets per second.
+	SendRate float64
+
 	// SessionDialTimeout is the number of seconds that a session dial
 	// is allowed to take until it is cancelled.
 	SessionDialTimeout int
@@ -257,10 +269,7 @@ func (c *Config) FixupAndValidate() error {
 		c.Logging = &defaultLogging
 	}
 	if c.Debug == nil {
-		c.Debug = &Debug{
-			PollingInterval:             defaultPollingInterval,
-			InitialMaxPKIRetrievalDelay: defaultInitialMaxPKIRetrievalDelay,
-		}
+		return errors.New("config: No Debug block was present")
 	} else {
 		c.Debug.fixup()
 	}

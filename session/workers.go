@@ -1,4 +1,4 @@
-// worker.go - mixnet client worker
+// workers.go - mixnet client workers
 // Copyright (C) 2018  David Stainton.
 //
 // This program is free software: you can redistribute it and/or modify
@@ -17,6 +17,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -31,6 +32,17 @@ type opConnStatusChanged struct {
 
 type opNewDocument struct {
 	doc *pki.Document
+}
+
+func (s *Session) isDocValid(doc *pki.Document) error {
+	const serviceLoop = "loop"
+	for _, provider := range doc.Providers {
+		_, ok := provider.Kaetzchen[serviceLoop]
+		if !ok {
+			return errors.New("Error, found a Provider which does not have the loop service.")
+		}
+	}
+	return nil
 }
 
 func (s *Session) connStatusChange(op opConnStatusChanged) bool {
@@ -56,10 +68,8 @@ func (s *Session) connStatusChange(op opConnStatusChanged) bool {
 }
 
 func (s *Session) sessionWorker() {
-	var isConnected bool
 	for {
 		var qo workerOp
-		var packet []byte = nil
 		select {
 		case <-s.HaltCh():
 			s.log.Debugf("Terminating gracefully.")
@@ -74,7 +84,7 @@ func (s *Session) sessionWorker() {
 			case opConnStatusChanged:
 				// Note: s.isConnected isn't used in favor of passing the
 				// value via an op, to save on locking headaches.
-				isConnected = s.connStatusChange(op)
+				_ = s.connStatusChange(op)
 			case opNewDocument:
 			default:
 				s.log.Warningf("BUG: Worker received nonsensical op: %T", op)
@@ -84,13 +94,39 @@ func (s *Session) sessionWorker() {
 	// NOTREACHED
 }
 
-func (s *Session) isDocValid(doc *pki.Document) error {
-	const serviceLoop = "loop"
-	for _, provider := range doc.Providers {
-		_, ok := provider.Kaetzchen[serviceLoop]
-		if !ok {
-			return errors.New("Error, found a Provider which does not have the loop service.")
+func (s *Session) sendWorker() {
+	for {
+		select {
+		case packet := <-s.cryptoChan:
+			s.onSendPacket(packet)
+		case <-s.HaltCh():
+			s.log.Info("HaltCh received event, halting now.")
+			return
 		}
 	}
-	return nil
+}
+
+func (s *Session) cryptoWorker() {
+	for {
+		pkt, _, _, err := s.minclient.ComposeSphinxPacket(s.cfg.Debug.TargetRecipient, s.cfg.Debug.TargetProvider, nil, s.payload[:])
+		if err != nil {
+			s.fatalErrCh <- err
+			return
+		}
+		select {
+		case s.cryptoChan <- pkt:
+		case <-s.HaltCh():
+			s.log.Info("HaltCh received event, halting now.")
+			return
+		}
+	}
+}
+
+func (s *Session) onSendPacket(packet []byte) {
+	ctx := context.Background()
+	s.limiter.Wait(ctx)
+	err := s.minclient.SendSphinxPacket(packet)
+	if err != nil {
+		s.log.Warningf("SendSphinxPacket failure: %s", err)
+	}
 }

@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	coreconstants "github.com/katzenpost/core/constants"
 	"github.com/katzenpost/core/crypto/ecdh"
 	"github.com/katzenpost/core/log"
 	"github.com/katzenpost/core/pki"
@@ -35,6 +36,7 @@ import (
 	"github.com/katzenpost/minclient"
 	"github.com/katzenpost/spray/config"
 	"github.com/katzenpost/spray/internal/pkiclient"
+	"golang.org/x/time/rate"
 	"gopkg.in/op/go-logging.v1"
 )
 
@@ -83,8 +85,11 @@ type Session struct {
 	onlineAt  time.Time
 	hasPKIDoc bool
 
+	limiter    *rate.Limiter
+	connChan   chan bool
 	cryptoChan chan []byte
 	egressChan chan []byte
+	payload    [coreconstants.UserForwardPayloadLength]byte
 }
 
 // New establishes a session with provider using key.
@@ -114,6 +119,10 @@ func New(ctx context.Context, fatalErrCh chan error, logBackend *log.Backend, cf
 		log:        log,
 		fatalErrCh: fatalErrCh,
 		opCh:       make(chan workerOp),
+		limiter:    rate.NewLimiter(rate.Limit(cfg.Debug.SendRate), cfg.Debug.SendBurst),
+		connChan:   make(chan bool),
+		cryptoChan: make(chan []byte), // XXX
+		egressChan: make(chan []byte), // XXX
 	}
 	id := cfg.Account.User + "@" + cfg.Account.Provider
 	basePath := filepath.Join(cfg.Proxy.DataDir, id)
@@ -155,7 +164,9 @@ func New(ctx context.Context, fatalErrCh chan error, logBackend *log.Backend, cf
 		return nil, err
 	}
 
+	s.Go(s.sessionWorker)
 	s.Go(s.sendWorker)
+	s.Go(s.cryptoWorker)
 	return s, nil
 }
 
