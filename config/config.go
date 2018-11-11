@@ -94,7 +94,7 @@ type Debug struct {
 	// TargetProvider is the target service provider for our probes.
 	TargetProvider string
 
-	// TargetRecipienti is the target recipient for our probes.
+	// TargetRecipient is the target recipient for our probes.
 	TargetRecipient string
 
 	// SendBurst controls the burst rate of the egress rate limiter.
